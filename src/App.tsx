@@ -66,13 +66,14 @@ const establishmentYears = [
 ];
 const stockStatuses = ["上場している", "上場していない", "非公開"];
 const challenges = [
-  "開発速度",
-  "根気強さ",
+  "プロダクトの開発速度",
   "市場競争",
   "資金調達",
   "人材確保",
   "イノベーション",
   "技術的負債",
+  "管理職の確保",
+  "新卒の採用",
 ];
 const industries = [
   "IT",
@@ -128,6 +129,9 @@ const SpeechToText: React.FC = () => {
   const [userRole, setUserRole] = useState("");
   const [userJobChanges, setUserJobChanges] = useState("");
   const [userCurrentIncome, setUserCurrentIncome] = useState("");
+  const [isRecognitionStarted, setIsRecognitionStarted] = useState(false);
+  const [reCoonectCount, setReCoonectCount] = useState(0);
+
   const recognitionRef = useRef<ISpeechRecognition | null>(null);
   const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -140,63 +144,88 @@ const SpeechToText: React.FC = () => {
         : [...prev, challenge]
     );
   };
+  const handleResult = (event: SpeechRecognitionEvent) => {
+    const newTranscript = Array.from(event.results)
+      .map((result) => result[0].transcript)
+      .join("");
+    setTranscript(newTranscript);
 
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+    }
+
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      setCountdown(null);
+    }
+
+    silenceTimeoutRef.current = setTimeout(() => {
+      startCountdown();
+    }, 500); // 5秒の途切れ
+    scrollToBottom(); // 自動スクロールを追加
+  };
   useEffect(() => {
-    const handleResult = (event: SpeechRecognitionEvent) => {
-      const newTranscript = Array.from(event.results)
-        .map((result) => result[0].transcript)
-        .join("");
-      setTranscript(newTranscript);
-
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-      }
-
-      if (countdownIntervalRef.current) {
-        clearInterval(countdownIntervalRef.current);
-        setCountdown(null);
-      }
-
-      silenceTimeoutRef.current = setTimeout(() => {
-        startCountdown();
-      }, 5000); // 5秒の途切れ
-      scrollToBottom(); // 自動スクロールを追加
-    };
-
     if (isListening) {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognitionRef.current = recognition;
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = "ja-JP";
-        recognition.onresult = handleResult;
-        recognition.start();
-
-        recognition.onend = () => {
-          setIsListening(false);
-        };
-
-        return () => {
-          console.log(transcript, "終了条件");
-          console.log(isListening, "isListening");
-          if (transcript === "" && isListening) return;
-          console.log("終了");
-          recognition.stop();
-          recognition.onresult = null;
-        };
-      }
+      startRecognition();
     } else {
       handleSubmit(transcript, "user");
     }
-    console.log(messages, "messages");
     console.log(isListening, "isListening");
   }, [isListening]);
 
+  useEffect(() => {
+    if (isListening && !isRecognitionStarted) {
+      reStartRecognition();
+    }
+    console.log("途中で切れたタイミング");
+  }, [isRecognitionStarted]);
+
+  const startRecognition = () => {
+    if (isRecognitionStarted) {
+      return; // 既に開始されている場合は何もしない
+    }
+
+    if (!recognitionRef.current) {
+      const SpeechRecognition =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const newRecognition: ISpeechRecognition = new SpeechRecognition();
+        recognitionRef.current = newRecognition;
+        newRecognition.continuous = true;
+        newRecognition.interimResults = true;
+        newRecognition.lang = "ja-JP";
+        newRecognition.onresult = handleResult;
+        newRecognition.onend = () => {
+          setIsRecognitionStarted(false);
+        };
+      }
+    }
+
+    recognitionRef.current?.start();
+    setIsRecognitionStarted(true); // 開始したことを記録
+  };
+  const stopRecognition = () => {
+    if (isRecognitionStarted && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsRecognitionStarted(false); // 停止したことを記録
+      recognitionRef.current.onresult = null;
+    }
+  };
+
+  const reStartRecognition = () => {
+    console.log("Restarting recognition...");
+    setReCoonectCount((prev) => prev + 1);
+    if (reCoonectCount < 3) {
+      stopRecognition();
+      startRecognition();
+    } else {
+      // 自動で終了する
+      stopRecognition();
+    }
+  };
+
   const startCountdown = () => {
-    setCountdown(3);
+    setCountdown(2);
     countdownIntervalRef.current = setInterval(() => {
       setCountdown((prevCountdown) => {
         if (prevCountdown !== null && prevCountdown > 1) {
@@ -205,8 +234,9 @@ const SpeechToText: React.FC = () => {
           if (countdownIntervalRef.current) {
             clearInterval(countdownIntervalRef.current);
           }
-          console.log(transcript, "送信するtranscript");
+          // console.log(transcript, "送信するtranscript");
           handleSubmit(transcript, "user");
+          setIsListening(false);
           return null;
         }
       });
@@ -229,8 +259,6 @@ const SpeechToText: React.FC = () => {
   };
 
   const handleSubmit = async (text: string, sender: "user" | "assistant") => {
-    console.log(text, "text");
-    console.log(transcript, "transcript");
     if (recognitionRef.current && sender === "user") {
       recognitionRef.current.stop();
     }
@@ -261,7 +289,6 @@ const SpeechToText: React.FC = () => {
       })),
       { role: sender === "user" ? "user" : "assistant", content: text },
     ];
-    console.log(messagesForAPI, "messagesForAPI");
 
     const requestOptions = {
       method: "POST",
@@ -272,7 +299,7 @@ const SpeechToText: React.FC = () => {
       body: JSON.stringify({
         model: "gpt-4o",
         messages: messagesForAPI,
-        max_tokens: 150,
+        max_tokens: 1000,
         temperature: 0.7,
       }),
     };
